@@ -6,6 +6,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -36,6 +38,7 @@ var (
 	setTimer         = user32.NewProc("SetTimer")
 	killTimer        = user32.NewProc("KillTimer")
 	messageBoxW      = user32.NewProc("MessageBoxW")
+	postMessageW     = user32.NewProc("PostMessageW")
 	loadImageW       = user32.NewProc("LoadImageW")
 	loadIconW        = user32.NewProc("LoadIconW")
 	createFontW      = user32.NewProc("CreateFontW")
@@ -45,6 +48,7 @@ var (
 )
 
 const (
+	WM_APP                       = 0x8000
 	WM_DESTROY                   = 0x0002
 	WM_SIZE                      = 0x0005
 	WM_SETTEXT                   = 0x000C
@@ -109,7 +113,7 @@ const (
 	ID_STATUS       = 107
 )
 
-const appTitle = "kill-port —— 端口查询 / 进程终止  v1.1.0"
+const appTitle = "kill-port —— 端口查询 / 进程终止  v1.1.1"
 
 type wndclassex struct {
 	size         uint32
@@ -133,7 +137,7 @@ type msg struct {
 	message  uint32
 	reserved uint32
 	wParam   uintptr
-	lParam   int32
+	lParam   uintptr // x64: LPARAM 为 64 位
 	time     uint32
 	x, y     int32
 	private  uint32
@@ -189,11 +193,35 @@ func sendMsg(h syscall.Handle, m uint32, wp, lp uintptr) uintptr {
 	return r
 }
 
+// logf 把启动/崩溃轨迹写入 %TEMP%\kill-port.log，方便定位“双击没反应”类问题
+func logf(format string, a ...any) {
+	s := fmt.Sprintf("[%s] %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, a...))
+	dir := os.TempDir()
+	if f, err := os.OpenFile(filepath.Join(dir, "kill-port.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+		f.WriteString(s)
+		f.Close()
+	}
+}
+
+func fatal(msg string) {
+	logf("FATAL: %s", msg)
+	messageBoxW.Call(0, uintptr(unsafe.Pointer(u16p("启动失败:\n"+msg))), uintptr(unsafe.Pointer(u16p("kill-port"))), MB_ICONWARNING)
+	os.Exit(1)
+}
+
 func main() {
 	runtime.LockOSThread()
+	defer func() {
+		if r := recover(); r != nil {
+			fatal(fmt.Sprintf("程序异常: %v", r))
+		}
+	}()
+	exe, _ := os.Executable()
+	logf("=== 启动 v1.1.1 gui, exe=%s ===", exe)
 	if err := runGUI(); err != nil {
-		messageBoxW.Call(0, uintptr(unsafe.Pointer(u16p("启动失败: "+err.Error()))), uintptr(unsafe.Pointer(u16p("kill-port"))), MB_ICONWARNING)
+		fatal(err.Error())
 	}
+	logf("=== 正常退出 ===")
 }
 
 func runGUI() error {
@@ -226,22 +254,25 @@ func runGUI() error {
 	wc.hBackground = syscall.Handle(16) // (COLOR_WINDOW+1)
 	wc.lpszClass = u16p("killPortGUI")
 	if r, _, _ := registerClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 {
-		return fmt.Errorf("RegisterClassEx 失败")
+		return fmt.Errorf("RegisterClassEx 失败(Win32 错误码 %d)", syscall.GetLastError())
 	}
+	logf("窗口类注册 OK")
 
 	hwnd, _, _ := createWindowExW.Call(0, uintptr(unsafe.Pointer(u16p("killPortGUI"))),
 		uintptr(unsafe.Pointer(u16p(appTitle))), WS_OVERLAPPEDWINDOW,
 		CW_USEDEFAULT, CW_USEDEFAULT, 780, 540, 0, 0, uintptr(hinst), 0)
 	if hwnd == 0 {
-		return fmt.Errorf("CreateWindowEx 失败")
+		return fmt.Errorf("CreateWindowEx 失败(Win32 错误码 %d)", syscall.GetLastError())
 	}
+	logf("主窗口创建 OK hwnd=%d", hwnd)
 	hwndMain = syscall.Handle(hwnd)
 
 	createControls()
 
 	showWindow.Call(uintptr(hwndMain), SW_SHOW)
 	updateWindow.Call(uintptr(hwndMain))
-	doRefresh()
+	logf("窗口已显示，进入消息循环")
+	postMessageW.Call(uintptr(hwndMain), WM_APP+1, 0, 0) // 首刷交给消息循环处理
 
 	var m msg
 	for {
@@ -352,6 +383,9 @@ func wndProc(h syscall.Handle, msg uint32, wp, lp uintptr) uintptr {
 			doRefresh()
 		}
 		return 0
+	case WM_APP + 1:
+		doRefresh()
+		return 0
 	case WM_COMMAND:
 		id := wp & 0xFFFF
 		code := (wp >> 16) & 0xFFFF
@@ -385,6 +419,7 @@ func wndProc(h syscall.Handle, msg uint32, wp, lp uintptr) uintptr {
 func doRefresh() {
 	conns, err := listenConns()
 	if err != nil {
+		logf("listenConns 失败: %v", err)
 		setStatus("查询失败: " + err.Error())
 		return
 	}

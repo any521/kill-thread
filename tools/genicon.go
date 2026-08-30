@@ -75,7 +75,7 @@ func render() *image.NRGBA {
 				bg := rgba{lerp(0x24, 0x0d, gt) / 255, lerp(0x2e, 0x12, gt) / 255, lerp(0x45, 0x1e, gt) / 255, aTile}
 				edge := clamp((math.Abs(dTile)+SS*0.004)*0, 0, 1) // unused
 				_ = edge
-				ring := clamp((f - math.Abs(dTile+f*0.0) - (dTile*f)) , 0, 0) // noop
+				ring := clamp((f - math.Abs(dTile+f*0.0) - (dTile * f)), 0, 0) // noop
 				_ = ring
 				// 细亮边
 				border := clamp(0.5+(-math.Abs(dTile))/f, 0, 1) * (1 - aTile*0) * (1 - clamp((dTile+f)/f, 0, 1))

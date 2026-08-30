@@ -47,7 +47,9 @@ func findPort(port int) ([]Conn, error) {
 
 func killPID(pid int) error {
 	if runtime.GOOS == "windows" {
-		out, err := exec.Command("taskkill", "/F", "/PID", strconv.Itoa(pid)).CombinedOutput()
+		tcmd := exec.Command("taskkill", "/F", "/PID", strconv.Itoa(pid))
+		tcmd.SysProcAttr = hideWindowAttr()
+		out, err := tcmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("%v (%s)", err, strings.TrimSpace(string(out)))
 		}
@@ -91,7 +93,9 @@ func processName(pid int) string {
 //	TCP  0.0.0.0:135  0.0.0.0:0  LISTENING  1024
 //	UDP  0.0.0.0:5353 *:*                   4
 func windowsListenConns() ([]Conn, error) {
-	out, err := exec.Command("netstat", "-ano").Output()
+	cmd := exec.Command("netstat", "-ano")
+	cmd.SysProcAttr = hideWindowAttr()
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("执行 netstat -ano 失败: %w", err)
 	}
@@ -125,7 +129,9 @@ func windowsListenConns() ([]Conn, error) {
 
 // windowsProcNames 通过 tasklist /FO CSV /NH 得到 PID -> 映像名
 func windowsProcNames() (map[int]string, error) {
-	out, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
+	tcmd := exec.Command("tasklist", "/FO", "CSV", "/NH")
+	tcmd.SysProcAttr = hideWindowAttr()
+	out, err := tcmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("执行 tasklist 失败: %w", err)
 	}
@@ -198,7 +204,9 @@ func unixSS() ([]Conn, error) {
 	rePID := regexp.MustCompile(`pid=(\d+)`)
 	reName := regexp.MustCompile(`\(\("([^"]+)"`)
 	for _, flags := range [][]string{{"-H", "-ltnp"}, {"-H", "-lunp"}} {
-		out, err := exec.Command("ss", flags...).Output()
+		scmd := exec.Command("ss", flags...)
+		scmd.SysProcAttr = hideWindowAttr()
+		out, err := scmd.Output()
 		if err != nil && len(out) == 0 {
 			continue
 		}

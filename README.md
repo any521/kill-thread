@@ -11,8 +11,8 @@ v1.1.0 起提供两种形态：
 
 ## 下载（点击即可）
 
-* **⭐ [下载 kill-port.exe（图形界面版 v1.1.0）](https://github.com/any521/kill-thread/releases/download/v1.1.0/kill-port.exe)**
-* [下载 kill-port-cli.exe（命令行版 v1.1.0）](https://github.com/any521/kill-thread/releases/download/v1.1.0/kill-port-cli.exe)
+* **⭐ [下载 kill-port.exe（图形界面版 v1.1.1）](https://github.com/any521/kill-thread/releases/download/v1.1.1/kill-port.exe)**
+* [下载 kill-port-cli.exe（命令行版 v1.1.1）](https://github.com/any521/kill-thread/releases/download/v1.1.1/kill-port-cli.exe)
 * 版本总览：[Latest Release](https://github.com/any521/kill-thread/releases/latest)
 
 均为 Windows x64 单文件（约 2.3 MB），免安装、免 .NET/VC++ 运行库，下载后**双击即用**。
@@ -63,7 +63,7 @@ kill-port-cli.exe help            查看帮助
 
 ## 程序图标
 
-深色圆角方块 + 红色电源/终止符号 + 绿色终端角标，已嵌入 exe 文件本身（文件属性页也显示图标与版本信息 v1.1.0）：
+深色圆角方块 + 红色电源/终止符号 + 绿色终端角标，已嵌入 exe 文件本身（文件属性页也显示图标与版本信息 v1.1.1）：
 
 ![icon](./icon_preview.png)
 
@@ -84,11 +84,23 @@ go build -o kill-port .
 
 Windows 用户直接运行 `build.bat`；修改图标后先 `go run tools/genicon.go` 再 `go-winres make`。
 
+## 双击 exe 没反应？按顺序排查
+
+v1.1.1 起程序自带**启动日志**：任何启动失败都会弹窗提示，并记录到 `%TEMP%` 目录下的 `kill-port.log`（Win+R 输入 `%TEMP%` 回车即可找到）。排查步骤：
+
+1. **任务管理器**里找 `kill-port.exe`：若在进程列表里但没有窗口 → 查看日志文件末尾的错误信息。
+2. **杀软静默拦截（国内最常见）**：360/电脑管家/火绒会拦截调用 taskkill 的小工具且**不弹任何窗**。先完全退出杀软再双击；成功后把 exe 加入信任区，或到隔离区恢复文件。
+3. **SmartScreen**：蓝底提示点“更多信息 → 仍要运行”。
+4. **文件名/锁定**：浏览器下载可能改名或带“来自其他计算机”锁定标记——右键 → 属性 → 勾选“**解除锁定**”→ 应用。
+5. **系统版本**：v1.1.1 已改用支持 **Windows 7 SP1 及以上** 的 Go 编译；老 Win7 若提示缺补丁，先装系统更新或换 Win10/11。
+6. 仍不行：在 cmd 里运行 `kill-port-cli.exe list`，命令行版能看到具体报错。
+
 ## 常见问题
 
-* **双击没反应？** 首次运行若被 SmartScreen 拦截，点“更多信息 → 仍要运行”（个人工具未做代码签名所致，源码开源可自行编译验证）。
-* **结束失败？** 窗口底部显示“当前非管理员”时，请右键以管理员身份运行。
-* **杀软告警？** 本工具会调用 taskkill 结束进程，个别杀软可能提示，添加信任即可。
+* **双击没反应？** 见上面《双击 exe 没反应？》专节。
+* **刷新/结束进程闪黑框？** 已修复：v1.1.1 起子进程（netstat/tasklist/taskkill）全部隐藏窗口运行。
+* **结束失败？** 窗口底部显示“当前非管理员”时，右键以管理员身份运行。
+* **误报杀毒？** 本工具调用 taskkill 结束进程，个别杀软会告警，添加信任即可（源码开源可自行编译验证）。
 
 ## License
 
