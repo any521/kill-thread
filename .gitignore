@@ -5,3 +5,6 @@ kill-port-macOS
 *.log
 build/
 *.bak
+# 本地构建产物备份
+*.sy~
+*.json~
