@@ -1,0 +1,5 @@
+# 构建产物（Linux / macOS 本地产物；Windows exe 作为发行文件保留在仓库）
+kill-port
+kill-port-linux
+kill-port-macOS
+*.log
