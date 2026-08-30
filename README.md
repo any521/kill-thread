@@ -11,8 +11,8 @@ v1.1.0 起提供两种形态：
 
 ## 下载（点击即可）
 
-* **⭐ [下载 kill-port.exe（图形界面版 v1.1.1）](https://github.com/any521/kill-thread/releases/download/v1.1.1/kill-port.exe)**
-* [下载 kill-port-cli.exe（命令行版 v1.1.1）](https://github.com/any521/kill-thread/releases/download/v1.1.1/kill-port-cli.exe)
+* **⭐ [下载 kill-port.exe（图形界面版 v1.1.2）](https://github.com/any521/kill-thread/releases/download/v1.1.2/kill-port.exe)**
+* [下载 kill-port-cli.exe（命令行版 v1.1.2）](https://github.com/any521/kill-thread/releases/download/v1.1.2/kill-port-cli.exe)
 * 版本总览：[Latest Release](https://github.com/any521/kill-thread/releases/latest)
 
 均为 Windows x64 单文件（约 2.3 MB），免安装、免 .NET/VC++ 运行库，下载后**双击即用**。
@@ -63,7 +63,7 @@ kill-port-cli.exe help            查看帮助
 
 ## 程序图标
 
-深色圆角方块 + 红色电源/终止符号 + 绿色终端角标，已嵌入 exe 文件本身（文件属性页也显示图标与版本信息 v1.1.1）：
+深色圆角方块 + 红色电源/终止符号 + 绿色终端角标，已嵌入 exe 文件本身（文件属性页也显示图标与版本信息 v1.1.2）：
 
 ![icon](./icon_preview.png)
 

@@ -18,6 +18,7 @@ import (
 
 var (
 	user32   = syscall.NewLazyDLL("user32.dll")
+	gdi32    = syscall.NewLazyDLL("gdi32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
 	comctl32 = syscall.NewLazyDLL("comctl32.dll")
 	shell32  = syscall.NewLazyDLL("shell32.dll")
@@ -41,7 +42,7 @@ var (
 	postMessageW     = user32.NewProc("PostMessageW")
 	loadImageW       = user32.NewProc("LoadImageW")
 	loadIconW        = user32.NewProc("LoadIconW")
-	createFontW      = user32.NewProc("CreateFontW")
+	createFontW      = gdi32.NewProc("CreateFontW") // 注意：GDI 函数在 gdi32.dll，不在 user32
 	getModuleHandleW = kernel32.NewProc("GetModuleHandleW")
 	initCommonCtl    = comctl32.NewProc("InitCommonControlsEx")
 	isUserAdmin      = shell32.NewProc("IsUserAnAdmin")
@@ -113,7 +114,7 @@ const (
 	ID_STATUS       = 107
 )
 
-const appTitle = "kill-port —— 端口查询 / 进程终止  v1.1.1"
+const appTitle = "kill-port —— 端口查询 / 进程终止  v1.1.2"
 
 type wndclassex struct {
 	size         uint32
@@ -217,7 +218,7 @@ func main() {
 		}
 	}()
 	exe, _ := os.Executable()
-	logf("=== 启动 v1.1.1 gui, exe=%s ===", exe)
+	logf("=== 启动 v1.1.2 gui, exe=%s ===", exe)
 	if err := runGUI(); err != nil {
 		fatal(err.Error())
 	}
