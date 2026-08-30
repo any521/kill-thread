@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -121,7 +122,7 @@ const (
 	ICC_STANDARD_CLASSES = 0x00002000
 )
 
-const appTitle = "端口管理 —— kill-port v1.3.0"
+const appTitle = "端口管理 —— kill-port v1.4.0"
 
 // 微信配色 (COLORREF)
 func cref(r, g, b int) uintptr { return uintptr(r | g<<8 | b<<16) }
@@ -213,6 +214,7 @@ const (
 	hitNavLogs
 	hitBtnLogRefresh
 	hitBtnLogOpen
+	hitElevate
 )
 
 type hitZone struct {
@@ -231,15 +233,16 @@ var (
 	hwndMain                        syscall.Handle
 	fH1, fBig, fTx, fBd, fSm, fLogo syscall.Handle
 
-	mu         sync.Mutex
-	allData    []Conn
-	pendAll    []Conn
-	pendErr    error
-	shown      []Conn
-	refreshing bool
-	killBusy   bool
-	pendOk     []string
-	pendBad    []string
+	mu          sync.Mutex
+	allData     []Conn
+	pendAll     []Conn
+	pendErr     error
+	shown       []Conn
+	refreshing  bool
+	killBusy    bool
+	pendOk      []string
+	pendBad     []string
+	pendBadPids []int
 
 	q         []rune
 	focused   bool
@@ -247,6 +250,7 @@ var (
 	selected  = -1
 	scrollY   int
 	autoOn    = true
+	isAdmin   bool
 	hits      []hitZone
 	hover     hitZone
 	lastTime  string
@@ -279,6 +283,10 @@ func fatal(m string) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--kill-elevated" {
+		elevatedHelper()
+		return
+	}
 	runtime.LockOSThread()
 	defer func() {
 		if r := recover(); r != nil {
@@ -286,7 +294,7 @@ func main() {
 		}
 	}()
 	exe, _ := os.Executable()
-	logf("=== 启动 v1.3.0 gui(微信风格), exe=%s ===", exe)
+	logf("=== 启动 v1.4.0 gui(微信风格), exe=%s ===", exe)
 	if err := runGUI(); err != nil {
 		fatal(err.Error())
 	}
@@ -336,7 +344,9 @@ func runGUI() error {
 	fBd = mkFont(14, 700)
 	fSm = mkFont(12, 400)
 	fLogo = mkFont(20, 700)
-	logf("窗口与字体创建 OK")
+	a, _, _ := isUserAdmin.Call()
+	isAdmin = a != 0
+	logf("窗口与字体创建 OK, isAdmin=%v", isAdmin)
 
 	showWindow.Call(hwnd, SW_SHOW)
 	updateWindow.Call(hwnd)
@@ -390,15 +400,17 @@ func startKill(targets []kTarget, desc string) {
 	invalidate()
 	go func() {
 		var ok, bad []string
+		var badPids []int
 		for _, t := range targets {
 			if err := killPID(t.pid); err != nil {
 				bad = append(bad, fmt.Sprintf("%s (PID %d): %v", t.name, t.pid, err))
+				badPids = append(badPids, t.pid)
 			} else {
 				ok = append(ok, fmt.Sprintf("%s (PID %d)", t.name, t.pid))
 			}
 		}
 		mu.Lock()
-		pendOk, pendBad = ok, bad
+		pendOk, pendBad, pendBadPids = ok, bad, badPids
 		mu.Unlock()
 		postMessageW.Call(uintptr(hwndMain), WM_APP+3, 0, 0)
 	}()
@@ -470,6 +482,11 @@ func wndProc(h syscall.Handle, msgid uint32, wp, lp uintptr) uintptr {
 			caretOn = !caretOn
 			invalidate()
 		}
+		if wp == 3 {
+			killTimer.Call(uintptr(h), 3)
+			statusMsg = ""
+			requestRefresh()
+		}
 		return 0
 	case WM_APP + 1:
 		requestRefresh()
@@ -494,8 +511,8 @@ func wndProc(h syscall.Handle, msgid uint32, wp, lp uintptr) uintptr {
 		return 0
 	case WM_APP + 3:
 		mu.Lock()
-		ok, bad := pendOk, pendBad
-		pendOk, pendBad = nil, nil
+		ok, bad, badPids := pendOk, pendBad, pendBadPids
+		pendOk, pendBad, pendBadPids = nil, nil, nil
 		mu.Unlock()
 		killBusy = false
 		statusMsg = ""
@@ -512,6 +529,18 @@ func wndProc(h syscall.Handle, msgid uint32, wp, lp uintptr) uintptr {
 		}
 		if sb.Len() > 0 {
 			messageBoxW.Call(uintptr(h), uintptr(unsafe.Pointer(u16p(sb.String()))), uintptr(unsafe.Pointer(u16p("kill-port 结果"))), MB_ICONINFO)
+		}
+		if len(badPids) > 0 {
+			qq := fmt.Sprintf("检测到 %d 个进程需要管理员权限（Access denied）。\n\n立即以管理员权限补杀这些 PID？\n（弹出 UAC 确认后自动完成，无需重启本程序）", len(badPids))
+			if r, _, _ := messageBoxW.Call(uintptr(h), uintptr(unsafe.Pointer(u16p(qq))), uintptr(unsafe.Pointer(u16p("需要管理员权限"))), MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2); r == 6 {
+				if runElevatedKill(badPids) {
+					statusMsg = "等待 UAC 授权，提权进程将自动补杀…"
+					setTimer.Call(uintptr(h), 3, 3500, 0)
+				} else {
+					messageBoxW.Call(uintptr(h), uintptr(unsafe.Pointer(u16p("UAC 授权被取消或提权失败。\n可右键程序选择『以管理员身份运行』后重试。"))), uintptr(unsafe.Pointer(u16p("kill-port"))), MB_ICONINFO)
+				}
+				invalidate()
+			}
 		}
 		return 0
 	case WM_APP + 4:
@@ -566,7 +595,7 @@ func wndProc(h syscall.Handle, msgid uint32, wp, lp uintptr) uintptr {
 		return 0
 	case WM_SETCURSOR:
 		switch hover.kind {
-		case hitRowKill, hitBtnRefresh, hitBtnKillPort, hitToggle, hitClear, hitNavPorts, hitNavLogs, hitBtnLogRefresh, hitBtnLogOpen:
+		case hitRowKill, hitBtnRefresh, hitBtnKillPort, hitToggle, hitClear, hitNavPorts, hitNavLogs, hitBtnLogRefresh, hitBtnLogOpen, hitElevate:
 			hand, _, _ := loadCursorW.Call(0, uintptr(IDC_HAND))
 			setCursor.Call(hand)
 			return 1
@@ -588,7 +617,7 @@ func wndProc(h syscall.Handle, msgid uint32, wp, lp uintptr) uintptr {
 // ---------------- 交互 ----------------
 
 func hitAt(x, y int) hitZone {
-	for _, pr := range []int{hitNavPorts, hitNavLogs, hitRowKill, hitClear, hitToggle, hitBtnRefresh, hitBtnKillPort, hitBtnLogRefresh, hitBtnLogOpen, hitSearch, hitRow} {
+	for _, pr := range []int{hitNavPorts, hitNavLogs, hitRowKill, hitClear, hitToggle, hitBtnRefresh, hitBtnKillPort, hitBtnLogRefresh, hitBtnLogOpen, hitElevate, hitSearch, hitRow} {
 		for i := len(hits) - 1; i >= 0; i-- {
 			hz := hits[i]
 			if hz.kind == pr && inRect(x, y, hz.r) {
@@ -624,6 +653,11 @@ func onClick(x, y int, dbl bool) {
 		requestLogs()
 	case hitBtnLogOpen:
 		openLogFile()
+	case hitElevate:
+		if !isAdmin && relaunchElevated() {
+			logf("已提权重启，当前实例退出")
+			postQuitMessage.Call(0)
+		}
 	case hitSearch:
 		caretOn = true
 	case hitClear:
@@ -909,12 +943,18 @@ func paintAll(hdc syscall.Handle) {
 		st = statusMsg
 	}
 	text(m, st, x0, H-30, W/2, H-8, fSm, cSub, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS)
-	a, _, _ := isUserAdmin.Call()
-	hint := "以管理员身份运行可结束系统进程"
-	if a != 0 {
+	hint := "⚠ 无管理员权限 · 点击提权重启"
+	hc := cref(0xE6, 0x6A, 0x2E)
+	if isAdmin {
 		hint = "管理员权限已就绪"
+		hc = cGreen
+	} else {
+		hits = append(hits, hitZone{kind: hitElevate, r: rectT{int32(W / 2), int32(H - 30), int32(W - padL), int32(H - 8)}})
+		if hover.kind == hitElevate {
+			hint = "点击以管理员身份重新启动 →"
+		}
 	}
-	text(m, hint, W/2, H-30, W-padL, H-8, fSm, boolRef(a != 0, cGreen, cSub), DT_RIGHT|DT_VCENTER|DT_SINGLELINE)
+	text(m, hint, W/2, H-30, W-padL, H-8, fSm, hc, DT_RIGHT|DT_VCENTER|DT_SINGLELINE)
 
 	bitBlt.Call(uintptr(hdc), 0, 0, uintptr(W), uintptr(H), mem, 0, 0, SRCCOPY)
 }
@@ -1163,4 +1203,53 @@ func paintLogs(m syscall.Handle, x0, W, H int) {
 
 	text(m, fmt.Sprintf("最近 %d 行", len(logLines)), x0, H-30, W/2, H-8, fSm, cSub, DT_LEFT|DT_VCENTER|DT_SINGLELINE)
 	text(m, "日志为纯文本，可用记事本直接打开", W/2, H-30, W-padL, H-8, fSm, cSub, DT_RIGHT|DT_VCENTER|DT_SINGLELINE)
+}
+
+// ---------------- UAC 提权 ----------------
+
+// runElevatedKill 启动一个提权的自身实例，静默结束指定 PID（windowsgui 子系统，无黑框）。
+func runElevatedKill(pids []int) bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	args := "--kill-elevated"
+	for _, p := range pids {
+		args += fmt.Sprintf(" %d", p)
+	}
+	r, _, _ := shellExecuteW.Call(uintptr(hwndMain), uintptr(unsafe.Pointer(u16p("runas"))),
+		uintptr(unsafe.Pointer(u16p(exe))), uintptr(unsafe.Pointer(u16p(args))), 0, 0)
+	logf("runElevatedKill %s -> %d", args, r)
+	return r > 32
+}
+
+// relaunchElevated 以管理员权限重新启动本程序（正常界面）。
+func relaunchElevated() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	r, _, _ := shellExecuteW.Call(uintptr(hwndMain), uintptr(unsafe.Pointer(u16p("runas"))),
+		uintptr(unsafe.Pointer(u16p(exe))), 0, 0, 1)
+	logf("relaunchElevated -> %d", r)
+	return r > 32
+}
+
+// elevatedHelper 提权子实例入口：静默结束参数中的 PID 后退出。
+func elevatedHelper() {
+	logf("=== 提权补杀实例启动, args=%v ===", os.Args[2:])
+	var ok, bad []string
+	for _, a := range os.Args[2:] {
+		pid, err := strconv.Atoi(a)
+		if err != nil || pid <= 0 {
+			continue
+		}
+		if err := killPID(pid); err != nil {
+			bad = append(bad, fmt.Sprintf("%d:%v", pid, err))
+		} else {
+			ok = append(ok, fmt.Sprint(pid))
+		}
+	}
+	logf("提权补杀完成 ok=%v bad=%v", ok, bad)
+	os.Exit(0)
 }

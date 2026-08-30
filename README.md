@@ -11,8 +11,8 @@ v1.1.0 起提供两种形态：
 
 ## 下载（点击即可）
 
-* **⭐ [下载 kill-port.exe（图形界面版 v1.1.2）](https://github.com/any521/kill-thread/releases/download/v1.3.0/kill-port.exe)**
-* [下载 kill-port-cli.exe（命令行版 v1.1.2）](https://github.com/any521/kill-thread/releases/download/v1.3.0/kill-port-cli.exe)
+* **⭐ [下载 kill-port.exe（图形界面版 v1.1.2）](https://github.com/any521/kill-thread/releases/download/v1.4.0/kill-port.exe)**
+* [下载 kill-port-cli.exe（命令行版 v1.1.2）](https://github.com/any521/kill-thread/releases/download/v1.4.0/kill-port-cli.exe)
 * 版本总览：[Latest Release](https://github.com/any521/kill-thread/releases/latest)
 
 均为 Windows x64 单文件（约 2.3 MB），免安装、免 .NET/VC++ 运行库，下载后**双击即用**。
@@ -39,8 +39,11 @@ v1.1.0 起提供两种形态：
 * **结束端口全部进程**：先点选一行（绿色高亮），再点顶部绿色按钮，一次清空该端口所有占用（TCP/UDP、IPv4/IPv6）
 * **自动刷新**：微信绿滑动开关，默认每 2 秒后台同步（刷新/结束进程均不卡 UI）
 * 悬停高亮、行选中、细滚动条、滚轮翻页、管理员状态提示一应俱全
+* **一键 UAC 提权补杀**：结束 mysqld.exe / svchost.exe 等系统进程遇到 Access denied 时，自动询问「立即以管理员权限补杀」→ 弹一次 UAC 确认即静默完成，无需重启程序；右下角橙色提示也可点击提权重启
 * **左侧菜单**：「端口」= 管理主页；「日志」= 运行日志页（启动记录、结束进程操作、异常信息，微信绿高亮当前页，支持滚轮翻阅、一键用记事本打开日志文件）
 
+> **提示**：mysqld 等 Windows 服务进程被结束后，服务控制管理器可能自动重启它。想彻底停止请结束前在命令行执行 `net stop mysql`（服务名可用 `sc queryex type=service state=all | findstr /i mysql` 查询），或在「服务」管理器中禁用。
+>
 > 搜索框支持英文与数字输入（端口号/进程名检索足够）；如需粘贴中文进程名，可用命令行版 `query` 命令。
 
 ## 命令行版使用
