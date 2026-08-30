@@ -69,6 +69,7 @@ var (
 	getModuleHandleW = kernel32.NewProc("GetModuleHandleW")
 	initCommonCtl    = comctl32.NewProc("InitCommonControlsEx")
 	isUserAdmin      = shell32.NewProc("IsUserAnAdmin")
+	shellExecuteW    = shell32.NewProc("ShellExecuteW")
 )
 
 const (
@@ -104,6 +105,7 @@ const (
 	PS_SOLID    = 0
 	SRCCOPY     = 0x00CC0020
 	NULL_PEN    = 8
+	NULL_BRUSH  = 5
 	IDI_APPICON = 32512
 	IDC_ARROW   = 32512
 	IDC_HAND    = 32649
@@ -119,7 +121,7 @@ const (
 	ICC_STANDARD_CLASSES = 0x00002000
 )
 
-const appTitle = "端口管理 —— kill-port v1.2.0"
+const appTitle = "端口管理 —— kill-port v1.3.0"
 
 // 微信配色 (COLORREF)
 func cref(r, g, b int) uintptr { return uintptr(r | g<<8 | b<<16) }
@@ -207,6 +209,10 @@ const (
 	hitToggle
 	hitSearch
 	hitClear
+	hitNavPorts
+	hitNavLogs
+	hitBtnLogRefresh
+	hitBtnLogOpen
 )
 
 type hitZone struct {
@@ -246,6 +252,11 @@ var (
 	lastTime  string
 	statusMsg string
 	gcl       rectT
+
+	page      int // 0=端口管理 1=运行日志
+	logLines  []string
+	pendLogs  []string
+	logScroll int
 )
 
 func u16p(s string) *uint16 { p, _ := syscall.UTF16PtrFromString(s); return p }
@@ -275,7 +286,7 @@ func main() {
 		}
 	}()
 	exe, _ := os.Executable()
-	logf("=== 启动 v1.2.0 gui(微信风格), exe=%s ===", exe)
+	logf("=== 启动 v1.3.0 gui(微信风格), exe=%s ===", exe)
 	if err := runGUI(); err != nil {
 		fatal(err.Error())
 	}
@@ -449,7 +460,11 @@ func wndProc(h syscall.Handle, msgid uint32, wp, lp uintptr) uintptr {
 		return 0
 	case WM_TIMER:
 		if wp == 1 && autoOn && !killBusy {
-			requestRefresh()
+			if page == 1 {
+				requestLogs()
+			} else {
+				requestRefresh()
+			}
 		}
 		if wp == 2 && focused {
 			caretOn = !caretOn
@@ -499,6 +514,14 @@ func wndProc(h syscall.Handle, msgid uint32, wp, lp uintptr) uintptr {
 			messageBoxW.Call(uintptr(h), uintptr(unsafe.Pointer(u16p(sb.String()))), uintptr(unsafe.Pointer(u16p("kill-port 结果"))), MB_ICONINFO)
 		}
 		return 0
+	case WM_APP + 4:
+		mu.Lock()
+		logLines = pendLogs
+		pendLogs = nil
+		mu.Unlock()
+		clampLogScroll()
+		invalidate()
+		return 0
 	case WM_MOUSEMOVE:
 		onMove(gpx(lp), gpy(lp))
 		return 0
@@ -510,8 +533,13 @@ func wndProc(h syscall.Handle, msgid uint32, wp, lp uintptr) uintptr {
 		return 0
 	case WM_MOUSEWHEEL:
 		delta := int16(uint16((wp >> 16) & 0xFFFF))
-		scrollY -= int(delta) / 120 * 64
-		clampScroll()
+		if page == 1 {
+			logScroll -= int(delta) / 120 * 72
+			clampLogScroll()
+		} else {
+			scrollY -= int(delta) / 120 * 64
+			clampScroll()
+		}
 		invalidate()
 		return 0
 	case WM_CHAR:
@@ -538,7 +566,7 @@ func wndProc(h syscall.Handle, msgid uint32, wp, lp uintptr) uintptr {
 		return 0
 	case WM_SETCURSOR:
 		switch hover.kind {
-		case hitRowKill, hitBtnRefresh, hitBtnKillPort, hitToggle, hitClear:
+		case hitRowKill, hitBtnRefresh, hitBtnKillPort, hitToggle, hitClear, hitNavPorts, hitNavLogs, hitBtnLogRefresh, hitBtnLogOpen:
 			hand, _, _ := loadCursorW.Call(0, uintptr(IDC_HAND))
 			setCursor.Call(hand)
 			return 1
@@ -560,7 +588,7 @@ func wndProc(h syscall.Handle, msgid uint32, wp, lp uintptr) uintptr {
 // ---------------- 交互 ----------------
 
 func hitAt(x, y int) hitZone {
-	for _, pr := range []int{hitRowKill, hitClear, hitToggle, hitBtnRefresh, hitBtnKillPort, hitSearch, hitRow} {
+	for _, pr := range []int{hitNavPorts, hitNavLogs, hitRowKill, hitClear, hitToggle, hitBtnRefresh, hitBtnKillPort, hitBtnLogRefresh, hitBtnLogOpen, hitSearch, hitRow} {
 		for i := len(hits) - 1; i >= 0; i-- {
 			hz := hits[i]
 			if hz.kind == pr && inRect(x, y, hz.r) {
@@ -587,6 +615,15 @@ func onClick(x, y int, dbl bool) {
 	z := hitAt(x, y)
 	focused = z.kind == hitSearch
 	switch z.kind {
+	case hitNavPorts:
+		page = 0
+	case hitNavLogs:
+		page = 1
+		requestLogs()
+	case hitBtnLogRefresh:
+		requestLogs()
+	case hitBtnLogOpen:
+		openLogFile()
 	case hitSearch:
 		caretOn = true
 	case hitClear:
@@ -711,10 +748,17 @@ func paintAll(hdc syscall.Handle) {
 	lxc, lyc := sideW/2, 46
 	roundRect(m, lxc-20, lyc-20, lxc+20, lyc+20, 40, 40, cGreen, 0)
 	text(m, "端", lxc-20, lyc-20, lxc+20, lyc+20, fLogo, cCard, DT_CENTER|DT_VCENTER|DT_SINGLELINE)
-	roundRect(m, sideW/2-4, 86, sideW/2+4, 94, 8, 8, cref(0x66, 0x66, 0x66), 0)
-	roundRect(m, sideW/2-4, 104, sideW/2+4, 112, 8, 8, cref(0x44, 0x44, 0x44), 0)
+	// 侧栏菜单：端口 / 日志
+	drawNav(m, 112, "端口", iconPower, page == 0, hitNavPorts)
+	drawNav(m, 178, "日志", iconLog, page == 1, hitNavLogs)
 
 	x0 := sideW + padL
+
+	if page == 1 {
+		paintLogs(m, x0, W, H)
+		bitBlt.Call(uintptr(hdc), 0, 0, uintptr(W), uintptr(H), mem, 0, 0, SRCCOPY)
+		return
+	}
 
 	// 标题 + 副标题
 	text(m, "端口管理", x0, 20, x0+300, 52, fH1, cText, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX)
@@ -954,4 +998,169 @@ func measure(m syscall.Handle, f syscall.Handle, s string) int {
 	p := u16p(s)
 	getTextExtentPoint32W.Call(uintptr(m), uintptr(unsafe.Pointer(p)), uintptr(u16len(s)), uintptr(unsafe.Pointer(&sz)))
 	return int(sz.cx)
+}
+
+// ---------------- 侧栏菜单与日志页 ----------------
+
+func drawNav(m syscall.Handle, cy int, label string, icon func(syscall.Handle, int, int, uintptr), active bool, kind int) {
+	r := rectT{6, int32(cy - 26), int32(sideW - 6), int32(cy + 26)}
+	hits = append(hits, hitZone{kind: kind, r: r})
+	hov := hover.kind == kind
+	if active {
+		fill(m, 0, cy-26, 3, cy+26, cGreen)
+		roundRect(m, int(r.l), int(r.t), int(r.r), int(r.b), 8, 8, cref(0x21, 0x21, 0x21), 0)
+	} else if hov {
+		roundRect(m, int(r.l), int(r.t), int(r.r), int(r.b), 8, 8, cref(0x3A, 0x3A, 0x3A), 0)
+	}
+	col := cref(0x9A, 0x9A, 0x9A)
+	if active {
+		col = cGreen
+	} else if hov {
+		col = cref(0xC8, 0xC8, 0xC8)
+	}
+	icon(m, sideW/2, cy-6, col)
+	lc := cref(0x8A, 0x8A, 0x8A)
+	if active {
+		lc = cref(0xF0, 0xF0, 0xF0)
+	}
+	text(m, label, int(r.l), cy+8, int(r.r), cy+24, fSm, lc, DT_CENTER|DT_VCENTER|DT_SINGLELINE)
+}
+
+func iconPower(m syscall.Handle, x, y int, col uintptr) {
+	pen, _, _ := createPen.Call(PS_SOLID, 3, col)
+	nb, _, _ := getStockObject.Call(NULL_BRUSH)
+	oldP, _, _ := selectObject.Call(uintptr(m), pen)
+	oldB, _, _ := selectObject.Call(uintptr(m), nb)
+	ellipseProc.Call(uintptr(m), uintptr(x-8), uintptr(y-6), uintptr(x+8), uintptr(y+10))
+	moveToEx.Call(uintptr(m), uintptr(x), uintptr(y-12), 0)
+	lineTo.Call(uintptr(m), uintptr(x), uintptr(y-1))
+	selectObject.Call(uintptr(m), oldP)
+	selectObject.Call(uintptr(m), oldB)
+	deleteObject.Call(pen)
+}
+
+func iconLog(m syscall.Handle, x, y int, col uintptr) {
+	pen, _, _ := createPen.Call(PS_SOLID, 2, col)
+	nb, _, _ := getStockObject.Call(NULL_BRUSH)
+	oldP, _, _ := selectObject.Call(uintptr(m), pen)
+	oldB, _, _ := selectObject.Call(uintptr(m), nb)
+	roundRectProc.Call(uintptr(m), uintptr(x-8), uintptr(y-10), uintptr(x+8), uintptr(y+10), 4, 4)
+	for _, dy := range []int{-4, 0, 4} {
+		moveToEx.Call(uintptr(m), uintptr(x-4), uintptr(y+dy), 0)
+		lineTo.Call(uintptr(m), uintptr(x+4), uintptr(y+dy))
+	}
+	selectObject.Call(uintptr(m), oldP)
+	selectObject.Call(uintptr(m), oldB)
+	deleteObject.Call(pen)
+}
+
+func logFilePath() string { return filepath.Join(os.TempDir(), "kill-port.log") }
+
+func tailFile(p string, n int) []string {
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	const maxB = 64 * 1024
+	s := string(data)
+	if len(s) > maxB {
+		s = s[len(s)-maxB:]
+		if i := strings.IndexByte(s, '\n'); i >= 0 {
+			s = s[i+1:]
+		}
+	}
+	ls := strings.Split(s, "\n")
+	for len(ls) > 0 && ls[len(ls)-1] == "" {
+		ls = ls[:len(ls)-1]
+	}
+	if len(ls) > n {
+		ls = ls[len(ls)-n:]
+	}
+	return ls
+}
+
+func requestLogs() {
+	go func() {
+		ls := tailFile(logFilePath(), 300)
+		mu.Lock()
+		pendLogs = ls
+		mu.Unlock()
+		postMessageW.Call(uintptr(hwndMain), WM_APP+4, 0, 0)
+	}()
+}
+
+func openLogFile() {
+	p := logFilePath()
+	shellExecuteW.Call(uintptr(hwndMain), uintptr(unsafe.Pointer(u16p("open"))),
+		uintptr(unsafe.Pointer(u16p(p))), 0, 0, 1)
+}
+
+func clampLogScroll() {
+	maxScroll := len(logLines)*18 - contentH()
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if logScroll > maxScroll {
+		logScroll = maxScroll
+	}
+	if logScroll < 0 {
+		logScroll = 0
+	}
+}
+
+func paintLogs(m syscall.Handle, x0, W, H int) {
+	text(m, "运行日志", x0, 20, x0+300, 52, fH1, cText, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX)
+	text(m, "程序启动与结束进程操作记录 · "+logFilePath(), x0, 54, x0+700, 74, fSm, cSub, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX|DT_END_ELLIPSIS)
+
+	ty := 84
+	br := rectT{int32(x0), int32(ty), int32(x0 + 84), int32(ty + 30)}
+	hits = append(hits, hitZone{kind: hitBtnLogRefresh, r: br})
+	roundRect(m, int(br.l), int(br.t), int(br.r), int(br.b), 15, 15,
+		boolRef(hover.kind == hitBtnLogRefresh, cGrayHov, cCard), cBorder)
+	text(m, "刷新日志", int(br.l), int(br.t), int(br.r), int(br.b), fTx, cText, DT_CENTER|DT_VCENTER|DT_SINGLELINE)
+
+	or2 := rectT{int32(x0 + 96), int32(ty), int32(x0 + 96 + 112), int32(ty + 30)}
+	hits = append(hits, hitZone{kind: hitBtnLogOpen, r: or2})
+	roundRect(m, int(or2.l), int(or2.t), int(or2.r), int(or2.b), 15, 15,
+		boolRef(hover.kind == hitBtnLogOpen, cGreenHov, cGreen), 0)
+	text(m, "打开日志文件", int(or2.l), int(or2.t), int(or2.r), int(or2.b), fTx, cCard, DT_CENTER|DT_VCENTER|DT_SINGLELINE)
+
+	cx1, cx2 := x0, W-padL
+	cy1, cy2 := cardTop, H-cardBot
+	roundRect(m, cx1, cy1, cx2, cy2, 10, 10, cCard, cLine)
+
+	if len(logLines) == 0 {
+		text(m, "日志为空", cx1, cy1, cx2, cy2, fTx, cSub, DT_CENTER|DT_VCENTER|DT_SINGLELINE)
+	}
+	for i, ln := range logLines {
+		y0 := cy1 + 6 + i*18 - logScroll
+		if y0 < cy1 || y0 > cy2-16 {
+			continue
+		}
+		col := cText
+		if strings.Contains(ln, "FATAL") || strings.Contains(ln, "失败") {
+			col = cRed
+		} else if strings.HasPrefix(ln, "[") {
+			col = cref(0x66, 0x66, 0x66)
+		}
+		text(m, ln, cx1+14, y0, cx2-24, y0+18, fSm, col, DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS)
+	}
+
+	total := len(logLines) * 18
+	chh := contentH()
+	if total > chh && chh > 0 {
+		trackH := cy2 - cy1 - 8
+		thumbH := int(float64(chh) / float64(total) * float64(trackH))
+		if thumbH < 30 {
+			thumbH = 30
+		}
+		if thumbH > trackH {
+			thumbH = trackH
+		}
+		ty2 := cy1 + 4 + int(float64(logScroll)/float64(total-chh)*float64(trackH-thumbH))
+		roundRect(m, cx2-11, ty2, cx2-5, ty2+thumbH, 6, 6, cScrollBar, 0)
+	}
+
+	text(m, fmt.Sprintf("最近 %d 行", len(logLines)), x0, H-30, W/2, H-8, fSm, cSub, DT_LEFT|DT_VCENTER|DT_SINGLELINE)
+	text(m, "日志为纯文本，可用记事本直接打开", W/2, H-30, W-padL, H-8, fSm, cSub, DT_RIGHT|DT_VCENTER|DT_SINGLELINE)
 }
