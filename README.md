@@ -4,9 +4,15 @@
 
 直接双击 `kill-port.exe` 即进入中文交互菜单；也支持命令行参数快速操作。
 
-## 下载与使用
+## 下载（点击即可运行）
 
-1. 下载本仓库中的 [kill-port.exe](./kill-port.exe)（Windows x64，约 2.3 MB，绿色单文件）。
+- **⭐ [点击直接下载 kill-port.exe（Release 直链）](https://github.com/any521/kill-tread/releases/download/v1.0.0/kill-port.exe)** —— Windows x64，约 2.3 MB，免安装绿色单文件，下载后双击即可使用
+- 版本总览：[Latest Release](https://github.com/any521/kill-tread/releases/latest)
+- 源码仓库里也保留了一份 [kill-port.exe](./kill-port.exe)
+
+程序图标（深色圆角方块 + 红色电源/终止符号 + 绿色终端角标），已嵌入 exe 文件本身：
+
+![icon](./icon_preview.png)
 2. 双击运行进入菜单，或在命令行中使用：
 
 ```text

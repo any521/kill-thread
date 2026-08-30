@@ -3,3 +3,5 @@ kill-port
 kill-port-linux
 kill-port-macOS
 *.log
+build/
+*.bak
